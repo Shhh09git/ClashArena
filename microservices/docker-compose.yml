@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: clasharena-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  identity-service:
+    build: ./identity-service
+    container_name: identity-service
+    environment:
+      - SECRET_KEY=change-me-in-production
+      - DATABASE_URL=sqlite:///identity.db
+    expose:
+      - "8001"
+
+  tournament-service:
+    build: ./tournament-service
+    container_name: tournament-service
+    environment:
+      - SECRET_KEY=change-me-in-production
+      - DATABASE_URL=sqlite:///tournaments.db
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose:
+      - "8002"
+
+  ingestion-service:
+    build: ./ingestion-service
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    # no fixed container_name: this service is meant to be scaled,
+    # e.g. `docker compose up --scale ingestion-service=3`
+    expose:
+      - "8003"
+
+  leaderboard-service:
+    build: ./leaderboard-service
+    container_name: leaderboard-service
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - IDENTITY_URL=http://identity-service:8001
+      - DATABASE_URL=sqlite:///leaderboard.db
+    depends_on:
+      redis:
+        condition: service_healthy
+    expose:
+      - "8004"
+
+  gateway:
+    build: ./gateway
+    container_name: clasharena-gateway
+    environment:
+      - IDENTITY_URL=http://identity-service:8001
+      - TOURNAMENT_URL=http://tournament-service:8002
+      - LEADERBOARD_URL=http://leaderboard-service:8004
+    ports:
+      - "8000:8000"
+    depends_on:
+      - identity-service
+      - tournament-service
+      - leaderboard-service

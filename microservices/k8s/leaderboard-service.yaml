@@ -1,0 +1,78 @@
+# Demonstrates the ELASTICITY / SCALABILITY architecture characteristics:
+# leaderboard-service (a pure read-path consumer) can be scaled to many
+# replicas independently of every other service, and the HPA below will
+# grow/shrink it automatically as request load changes - exactly the
+# "burst then release" spectator behaviour described in the kata.
+#
+# Try it (with minikube running):
+#   minikube start
+#   kubectl apply -f k8s/
+#   kubectl get hpa -w
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: leaderboard-service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: leaderboard-service
+  template:
+    metadata:
+      labels:
+        app: leaderboard-service
+    spec:
+      containers:
+        - name: leaderboard-service
+          image: clasharena/leaderboard-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8004
+          env:
+            - name: REDIS_URL
+              value: redis://redis:6379/0
+            - name: IDENTITY_URL
+              value: http://identity-service:8001
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8004
+            initialDelaySeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: leaderboard-service
+spec:
+  selector:
+    app: leaderboard-service
+  ports:
+    - port: 8004
+      targetPort: 8004
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: leaderboard-service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: leaderboard-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
