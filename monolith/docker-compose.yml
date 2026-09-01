@@ -1,0 +1,21 @@
+version: "3.9"
+
+services:
+  monolith:
+    build: .
+    container_name: clasharena-monolith
+    environment:
+      - SECRET_KEY=change-me-in-production
+      - DATABASE_URL=sqlite:////data/clasharena.db
+    ports:
+      - "8000:8000"
+    volumes:
+      - monolith-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')\""]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  monolith-data:
