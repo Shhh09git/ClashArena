@@ -1,3 +1,7 @@
+
+GitHub usernames: `Shhh09git` is Shattyk Kuziyeva, `AceMageddon` is
+Daniil Glazunov.
+
 # ClashArena — Software Architecture Final Documentation
 
 Course: Software Architectures
@@ -254,3 +258,20 @@ clasharena/
     ├── docker-compose.yml
     └── README.md
 ```
+
+## AI usage transparency
+
+Per the course policy on generative AI, here's how we used it: Claude
+(Anthropic) scaffolded the first version of both architectures from
+our kata (monolith and the microservices split with the Redis
+result-ingestion pipeline) and drafted the initial documentation, and
+helped us debug issues as we hit them (Docker/VPN cert errors, port
+conflicts, a real application bug).
+
+What we did ourselves: ran the full system end to end multiple times,
+found and fixed a real bug in `leaderboard-service` (a crash on new
+players' rating entries — see `microservices/evidence-bugfix.txt`),
+tested fault tolerance and reliability manually, split and reviewed
+the code by domain (Daniil: identity/security; Shattyk:
+tournament/scalability) on our own branches with real pull requests,
+and made the actual architecture-characteristic decisions ourselves.
