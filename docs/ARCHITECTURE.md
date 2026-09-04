@@ -69,23 +69,26 @@ distributed version are in `microservices/README.md` and
 
 ## 4. Architecture characteristics driving the design
 
-Derived from the kata (see the kata PDF §3 for the full derivation):
+Derived from the kata (see docs/ClashArena-Architecture-Characteristics.pdf for the full derivation and kata references). These use the same ten characteristic names as that document, so the two deliverables agree:
 
 | Characteristic | Target | How each architecture addresses it |
 |---|---|---|
-| Elasticity | absorb a spectator/read burst without manual intervention | Monolith: none — the whole app scales as one unit, so a read spike forces scaling everything, including the write path. Distributed: `leaderboard-service` (pure read + stream consumer) scales independently via `--scale` / HPA. |
-| Scalability | sustain steady growth in accounts/events | Monolith: vertical scaling / running multiple identical replicas behind a load balancer, but the DB remains a single bottleneck. Distributed: each service scales to its own load profile; each owns its own DB. |
-| Reliability (result ingestion) | no loss, no double-count | Monolith: guaranteed trivially — result + rating update happen in one DB transaction. Distributed: guaranteed explicitly — `ingestion-service` de-duplicates by `event_id`, Redis consumer groups (XACK) prevent loss on worker crash. |
-| Fault tolerance | a failing component shouldn't take down read surfaces | Monolith: a bug or overload anywhere (e.g. rating logic) can take down bracket/leaderboard reads too, since it's one process. Distributed: `leaderboard-service` keeps serving its last known state even if `tournament-service` is down. |
-| Security / integrity | authenticated, authorised, auditable results | Both: JWT auth + role checks (RBAC) on every write endpoint; only the reporting organizer's identity is trusted, and each match can only be reported once. |
-| Deployability / modularity | independent evolution of domains | Monolith: one deployable unit — any change redeploys everything. Distributed: five independently buildable/deployable images. |
+| Partitioning type | domain-driven boundaries, not technical layers | Monolith: one codebase, but internally organised by domain (auth/tournaments/matches/leaderboard modules). Distributed: literally separate services, one per domain, each owning its own database. |
 | Simplicity | ease of understanding | Monolith clearly wins here — one codebase, one database, no network calls to reason about. This is the explicit trade-off we highlight in the conclusion. |
+| Modularity | discrete, independently buildable components | Monolith: modules share one process and one database, so nothing is truly independent. Distributed: 5 independently buildable Docker images, zero shared schema. |
+| Testability | results and dispute logic must be verifiable | Monolith: covered by 17 automated pytest tests (password hashing, JWT/RBAC, replay protection). Distributed: the same replay-protection property is verified manually via `ingestion-service`'s de-duplication stats; not yet automated there (future work). |
+| Deployability | ease, frequency and risk of deployment | Monolith: one command, one container, healthy in under a minute. Distributed: one command, six containers, healthy in under two minutes; any single service can also be rebuilt and redeployed on its own. |
+| Evolvability | ease of evolving the software | Monolith: any change means rebuilding and redeploying the whole app. Distributed: one service (e.g. `leaderboard-service`) can be changed, rebuilt and redeployed alone — demonstrated for real when we fixed a rating bug there without touching any other service. |
+| Responsiveness | how quickly the software replies | Monolith: synchronous, in-process — a reported result and its rating update happen in the same request. Distributed: asynchronous — a result flows through Redis before the leaderboard sees it, adding latency (sub-second in our own manual testing; not formally load tested). |
+| Scalability | sustain steady growth in accounts/events | Monolith: vertical scaling / running identical replicas behind a load balancer, but the database remains a single bottleneck. Distributed: each service scales to its own load profile; each owns its own database. |
+| Elasticity | absorb a spectator/read burst without manual intervention | Monolith: none — the whole app scales as one unit, so a read spike forces scaling everything, including the write path. Distributed: `leaderboard-service` (pure read + stream consumer) is designed to scale independently via `--scale` / a Kubernetes HPA — see the known limitation below regarding correctness at more than 1 replica. |
+| Fault tolerance | a failing component shouldn't take down read surfaces; results shouldn't be lost or double-counted | Monolith: one process — if it fails, everything fails, but within a single request a result and its rating update are atomic (trivially consistent). Distributed: `ingestion-service` de-duplicates by `event_id` and Redis consumer groups (`XACK`) prevent loss on worker crash; `leaderboard-service` keeps answering reads even if `tournament-service` is down (verified directly). |
 
-This table is the core deliverable of comparing the two styles: the
-monolith is simpler and trivially consistent; the microservices version
-buys elasticity, fault isolation and independent deployability at the
-cost of operational complexity (a message broker, eventual consistency
-between services, more moving parts to run locally).
+Security (JWT authentication, RBAC on every write endpoint) is not one of the course's twelve characteristics, so it isn't a row above — it's covered as a cross-cutting concern in §6 instead.
+
+This table is the core deliverable of comparing the two styles: the monolith is simpler and trivially consistent; the microservices version
+
+
 
 ## 5. Architectures
 
