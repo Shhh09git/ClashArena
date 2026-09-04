@@ -275,3 +275,46 @@ tested fault tolerance and reliability manually, split and reviewed
 the code by domain (Daniil: identity/security; Shattyk:
 tournament/scalability) on our own branches with real pull requests,
 and made the actual architecture-characteristic decisions ourselves.
+
+## Known limitation: leaderboard-service does not scale correctly yet
+
+`leaderboard-service` is the characteristic's headline example (its
+Kubernetes manifest scales it 2→10 replicas via an HPA), but scaling
+it beyond 1 replica is currently **broken**, for two reasons:
+
+1. Each replica has its own local SQLite file (`sqlite:///leaderboard.db`),
+   not a shared database. Replica A's writes are invisible to replica B.
+2. All replicas share one Redis consumer group (`leaderboard-group`).
+   A consumer group *distributes* messages — each event goes to exactly
+   one replica, not all of them. So with 10 replicas, the 10 databases
+   each hold a different, incomplete slice of the results, and
+   `GET /api/leaderboard` returns whichever slice the replica that
+   handled your request happens to know about.
+
+In short: the exact scenario the elasticity target describes (scale to
+10 replicas during a spectator burst) is where this breaks worst. At
+`minReplicas: 2` it is already inconsistent.
+
+**How we would fix it**, in increasing order of effort:
+
+1. Split read and write roles: one `leaderboard-writer` (1 replica)
+   consumes the stream and owns the database; a separate
+   `leaderboard-reader` Deployment only serves `GET /api/leaderboard`
+   against that same shared database, and is what the HPA actually
+   scales. This matches the read/write split we already describe
+   elsewhere in this document.
+2. Give each replica its own consumer group name (e.g.
+   `leaderboard-group-{HOSTNAME}`) so every replica sees every event
+   and builds a complete local copy — cheaper to implement, but
+   replicas can drift out of sync with each other over time.
+3. Move rating state into Redis itself (e.g. a sorted set) so every
+   replica reads from the same store instead of a local file.
+
+We are documenting this rather than shipping a fix we haven't tested,
+since we would rather be explicit about a limitation we understand
+than claim a scaling story that doesn't hold up under inspection.
+Related: no service currently mounts a volume for its database (the
+monolith does this correctly via `monolith-data:/data`), so every
+microservice's data is lost on `docker compose down` — worth fixing
+alongside the above.
+
