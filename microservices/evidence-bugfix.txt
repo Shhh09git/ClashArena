@@ -1,34 +1,40 @@
-Bug found in leaderboard-service: NoneType error when creating new leaderboard entries. Fixed by explicitly setting rating=1000 on creation. Verified working below.
+Bug 1 (found 31 Aug 2026): NoneType error in leaderboard-service when
+creating new leaderboard entries. Fixed by explicitly setting
+rating=1000 on creation instead of relying on the SQLAlchemy default,
+which isn't applied until the row is flushed.
 
-C:\Users\Admin>docker logs leaderboard-service
- * Serving Flask app 'app'
- * Debug mode: off
-WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
- * Running on all addresses (0.0.0.0)
- * Running on http://127.0.0.1:8004
- * Running on http://172.19.0.6:8004
-Press CTRL+C to quit
-/app/app.py:56: LegacyAPIWarning: The Query.get() method is considered legacy as of the 1.x series of SQLAlchemy and becomes a legacy construct in 2.0. The method is now available as Session.get() (deprecated since: 2.0) (Background on SQLAlchemy 2.0 at: https://sqlalche.me/e/b8d9)
-  entry = RatingEntry.query.get(user_id)
-Exception in thread Thread-1 (worker_loop):
-Traceback (most recent call last):
-  File "/usr/local/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
-    self.run()
-  File "/usr/local/lib/python3.11/threading.py", line 982, in run
-    self._target(*self._args, **self._kwargs)
-  File "/app/app.py", line 87, in worker_loop
-    winner.rating += 20
-TypeError: unsupported operand type(s) for +=: 'NoneType' and 'int'
-172.19.0.7 - - [31/Aug/2026 17:58:41] "GET /api/leaderboard HTTP/1.1" 200 -
+Bug 2 (found 5 Sep 2026, during a documentation review): the original
+version of this evidence file actually demonstrated a *different* bug,
+not a successful test. tournament-service had no check preventing a
+player from registering twice for the same tournament. When that
+happened by accident, the bracket paired a player against themselves,
+and the leaderboard below showed only one player with both a win and
+a loss - proof of the duplicate-registration bug, not proof the
+pipeline works correctly.
 
+Fix: added a duplicate-registration check to
+microservices/tournament-service/app.py's register_for_tournament(),
+matching the guard the monolith already had. Verified below with two
+genuinely distinct players.
 
+=== Verification run, 5 Sep 2026 ===
 
-C:\Users\Admin>curl -s -X POST localhost:8000/api/matches/1/result -H "Authorization: Bearer %TOKEN%" -H "Content-Type: application/json" -d "{\"winner_id\":2,\"score\":\"2-0\"}"
-{
-  "event_id": "20199df8-fcbd-418b-afa8-b1b53d8a1b07",
-  "status": "reported",
-  "winner_id": 2
-}
+1. Registered org_final (organizer), alice_f, bob_f as separate users.
+2. Logged in as alice_f, registered for tournament 1 - succeeded.
+3. Registered alice_f for tournament 1 a second time - correctly
+   rejected:
+   {"error":"already registered"}   (HTTP 409)
+4. Registered bob_f for tournament 1 - succeeded (once).
+5. Started the tournament:
+   {"players":2,"status":"in_progress"}
+6. Bracket correctly shows two distinct players:
+   {"id":1,"player1_id":2,"player2_id":3,"round":1,"status":"pending","winner_id":null}
+7. Reported the result (alice_f, id 2, wins 2-0):
+   {"event_id":"fd892073-4ffa-41de-b751-5fff2f06cde5","status":"reported","winner_id":2}
+8. Leaderboard now correctly shows both players:
+   [{"losses":0,"rating":1020,"username":"alice_f","wins":1},
+    {"losses":1,"rating":990,"username":"bob_f","wins":0}]
 
-C:\Users\Admin>curl -s localhost:8000/api/leaderboard
-[{"losses":1,"rating":1010,"username":"alice","wins":1}]
+This confirms the result-ingestion pipeline (tournament-service ->
+Redis -> ingestion-service -> Redis -> leaderboard-service) correctly
+processes a result between two distinct players end to end.

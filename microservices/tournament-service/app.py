@@ -157,6 +157,11 @@ def register_for_tournament(tid):
     t = Tournament.query.get_or_404(tid)
     if t.status != "registration":
         return jsonify({"error": "registration closed"}), 400
+    existing = Registration.query.filter_by(
+        tournament_id=tid, user_id=request.user["sub"]
+    ).first()
+    if existing:
+        return jsonify({"error": "already registered"}), 409
     db.session.add(Registration(tournament_id=tid, user_id=request.user["sub"]))
     db.session.commit()
     return jsonify({"status": "registered"}), 201
