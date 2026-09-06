@@ -14,27 +14,35 @@ pipeline works correctly.
 
 Fix: added a duplicate-registration check to
 microservices/tournament-service/app.py's register_for_tournament(),
-matching the guard the monolith already had. Verified below with two
-genuinely distinct players.
+matching the guard the monolith already had.
 
-=== Verification run, 5 Sep 2026 ===
+Bug 3 (found 6 Sep 2026): event_id was a random uuid4() generated
+fresh on every report, so a genuinely replayed result would never be
+recognised as a duplicate by ingestion-service's de-duplication logic
+(only the separate status == "reported" check on tournament-service
+was actually preventing double-counting). Fixed by making event_id
+deterministic: f"match-{match.id}-result", so the same match always
+produces the same id.
 
-1. Registered org_final (organizer), alice_f, bob_f as separate users.
-2. Logged in as alice_f, registered for tournament 1 - succeeded.
-3. Registered alice_f for tournament 1 a second time - correctly
-   rejected:
-   {"error":"already registered"}   (HTTP 409)
-4. Registered bob_f for tournament 1 - succeeded (once).
-5. Started the tournament:
+=== Verification run, 6 Sep 2026 (after all three fixes) ===
+
+1. Registered org_v2 (organizer), p1_v2, p2_v2 as separate users.
+2. Logged in as p1_v2, registered for tournament 1 - succeeded.
+3. Logged in as p2_v2, registered for tournament 1 - succeeded.
+4. Started the tournament:
    {"players":2,"status":"in_progress"}
-6. Bracket correctly shows two distinct players:
+5. Bracket correctly shows two distinct players:
    {"id":1,"player1_id":2,"player2_id":3,"round":1,"status":"pending","winner_id":null}
-7. Reported the result (alice_f, id 2, wins 2-0):
-   {"event_id":"fd892073-4ffa-41de-b751-5fff2f06cde5","status":"reported","winner_id":2}
-8. Leaderboard now correctly shows both players:
-   [{"losses":0,"rating":1020,"username":"alice_f","wins":1},
-    {"losses":1,"rating":990,"username":"bob_f","wins":0}]
+6. Reported the result (p1_v2, id 2, wins 2-0). Note the event_id is
+   now deterministic, not a random UUID:
+   {"event_id":"match-1-result","status":"reported","winner_id":2}
+7. Leaderboard correctly shows both players:
+   [{"losses":0,"rating":1020,"username":"p1_v2","wins":1},
+    {"losses":1,"rating":990,"username":"p2_v2","wins":0}]
 
-This confirms the result-ingestion pipeline (tournament-service ->
-Redis -> ingestion-service -> Redis -> leaderboard-service) correctly
-processes a result between two distinct players end to end.
+This confirms: (a) duplicate tournament registration is now rejected,
+(b) the result-ingestion pipeline correctly processes a result between
+two distinct players end to end, and (c) event_id is now deterministic
+per match, so ingestion-service's de-duplication logic can genuinely
+catch a replayed result rather than relying solely on the separate
+status check in tournament-service.
