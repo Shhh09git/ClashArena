@@ -18,7 +18,7 @@ gateway (8000)
   │                                 de-duplicates) events, republishes to
   │                                 `validated-results`
   └── leaderboard-service (8004)  — CONSUMES validated events, owns its
-                                     own ratings DB, serves GET /api/leaderboard
+                                    own ratings DB, serves GET /api/leaderboard
 ```
 
 Each service owns its own SQLite database (database-per-service). They
@@ -43,46 +43,33 @@ the gateway routes every request to the right service.
 ## What's actually distributed here
 
 * **Independent deployability / modularity**: each folder here is its own
-Docker image; you can rebuild and redeploy `leaderboard-service` without
-touching `tournament-service`.
-* **Database-per-service**: `identity.db`, `tournaments.db`,
-`leaderboard.db` are separate SQLite files (separate containers/volumes
-in production Postgres would be used, one instance per service).
+  Docker image; you can rebuild and redeploy `leaderboard-service` without
+  touching `tournament-service`.
+* **Database-per-service**: `identity.db`, `tournaments.db` and
+  `leaderboard.db` are separate SQLite files. In production these would be
+  separate Postgres instances, one per service.
 * **Reliability (no loss, no double-count)**: `ingestion-service`
-deduplicates every event by `event_id` using a Redis SET before it's
-ever counted, and Redis consumer groups (`XREADGROUP` / `XACK`) mean a
+  de-duplicates every event by `event_id` using a Redis SET before it is
+  ever counted. Because `event_id` is deterministic (`match-<id>-result`),
+  a genuine replay of the same match is caught here as well as by
+  `tournament-service`'s own status check. Redis consumer groups
+  (`XREADGROUP` / `XACK`) mean a crashed worker's un-acknowledged messages
+  sit pending in the stream rather than being lost outright — but we do
+  not currently run a reclaim loop (`XAUTOCLAIM`), so those messages stay
+  stuck until one is added. This is listed as future work in
+  `docs/ARCHITECTURE.md` §9.
+* **Elasticity / scalability**: `ingestion-service` is a pure stream
+  consumer with no local state, so it scales horizontally without issue:
 
-  crashed worker's un-acknowledged messages sit pending in the stream
-
-  rather than being lost outright — though we don't currently run a
-
-  reclaim loop (`XAUTOCLAIM`) to redeliver them automatically, so a
-
-  crashed consumer's in-flight messages stay stuck until that's added.
-
-* **Elasticity/scalability**: `ingestion-service` is a pure stream consumer
-
-&#x20;  with no local state, so it scales horizontally without issue:
-
-
-
-```bash
+  ```bash
   docker compose up --build --scale ingestion-service=3
+  ```
 
-```
-
-
-
-`leaderboard-service`, however, currently does **not** scale correctly
-
-beyond 1 replica — each replica keeps its own local SQLite file, so
-
-scaling it splits the leaderboard data across replicas instead of
-
-sharing it. See "Known limitation" in `docs/ARCHITECTURE.md` for the
-
-full explanation and how we'd fix it.
-
+  `leaderboard-service`, however, does **not** currently scale correctly
+  beyond one replica — each replica keeps its own local SQLite file, so
+  scaling splits the leaderboard data across replicas instead of sharing
+  it. See "Known limitation" in `docs/ARCHITECTURE.md` for the full
+  explanation and how we would fix it.
 
 See `k8s/leaderboard-service.yaml` for the equivalent on Kubernetes,
 including a HorizontalPodAutoscaler.
@@ -101,29 +88,20 @@ kubectl apply -f k8s/
 kubectl get pods -w
 ```
 
-**Known limitation:** `k8s/` currently only contains
+**Known limitation:** `k8s/` currently contains only
+`leaderboard-service.yaml`, as a scaling example. Running
+`kubectl apply -f k8s/` on a fresh minikube cluster deploys a
+`leaderboard-service` pod that cannot reach Redis or `identity-service`,
+since neither is deployed in the cluster — it will report healthy on
+`/healthz` while its background worker fails in a loop.
 
-`leaderboard-service.yaml` as a scaling example. Running
+To run the distributed architecture fully on Kubernetes you would also
+need `redis.yaml`, `identity-service.yaml`, `tournament-service.yaml`,
+`ingestion-service.yaml` and `gateway.yaml`, following the same
+Deployment + Service pattern as `leaderboard-service.yaml`. The
+HorizontalPodAutoscaler additionally requires
+`minikube addons enable metrics-server`.
 
-`kubectl apply -f k8s/` on a fresh minikube cluster will deploy a
-
-`leaderboard-service` pod that can't actually reach Redis or
-
-`identity-service`, since neither is deployed in the cluster — it'll
-
-report healthy on `/healthz` while its background worker fails in a
-
-loop. To fully run the distributed architecture on Kubernetes, you'd
-
-also need `redis.yaml` and `identity-service.yaml` (same Deployment +
-
-Service pattern as `leaderboard-service.yaml`) applied alongside it.
-
-The Horizontal Pod Autoscaler also requires
-
-`minikube addons enable metrics-server` first. Docker Compose is the
-
-fully working way to run this project end to end; the Kubernetes
-
-manifest demonstrates the scaling pattern the assignment asks for.)
-
+Docker Compose is the fully working way to run this project end to end;
+the Kubernetes manifest demonstrates the scaling pattern the assignment
+asks for.
