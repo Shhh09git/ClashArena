@@ -1,11 +1,34 @@
 version: "3.9"
 
+# Each stateful service gets its own named volume, so `docker compose down`
+# no longer wipes the system. This matters for more than convenience:
+#
+#   - identity.db / tournaments.db / leaderboard.db are the database-per-service
+#     boundary the architecture is built on. Losing them on every restart made
+#     "each service owns its data" true only until the next `down`.
+#   - redis-data persists the result streams AND the `seen-event-ids` set.
+#     That set is what guarantees no double-count. If Redis restarts empty,
+#     an event replayed after the restart is no longer recognised as a
+#     duplicate and WOULD be counted twice - so this volume is part of the
+#     reliability guarantee, not just a convenience.
+#
+# Note the four-slash DATABASE_URLs below: sqlite:///x.db is relative (lands
+# in /app, inside the image layer, lost on recreate), sqlite:////data/x.db is
+# absolute and lands on the mounted volume. The volume mounts at /data rather
+# than /app deliberately - mounting over /app would shadow the application
+# code with an empty directory.
+
 services:
   redis:
     image: redis:7-alpine
     container_name: clasharena-redis
+    # appendonly persists every write to disk, so the dedupe set and the
+    # streams survive a restart of the broker itself.
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -17,7 +40,9 @@ services:
     container_name: identity-service
     environment:
       - SECRET_KEY=change-me-in-production
-      - DATABASE_URL=sqlite:///identity.db
+      - DATABASE_URL=sqlite:////data/identity.db
+    volumes:
+      - identity-data:/data
     expose:
       - "8001"
 
@@ -26,8 +51,10 @@ services:
     container_name: tournament-service
     environment:
       - SECRET_KEY=change-me-in-production
-      - DATABASE_URL=sqlite:///tournaments.db
+      - DATABASE_URL=sqlite:////data/tournaments.db
       - REDIS_URL=redis://redis:6379/0
+    volumes:
+      - tournament-data:/data
     depends_on:
       redis:
         condition: service_healthy
@@ -41,8 +68,9 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-    # no fixed container_name: this service is meant to be scaled,
-    # e.g. `docker compose up --scale ingestion-service=3`
+    # No volume and no fixed container_name: this service is stateless (all
+    # of its state lives in Redis), which is exactly what makes it safe to
+    # scale horizontally, e.g. `docker compose up --scale ingestion-service=3`
     expose:
       - "8003"
 
@@ -52,7 +80,9 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379/0
       - IDENTITY_URL=http://identity-service:8001
-      - DATABASE_URL=sqlite:///leaderboard.db
+      - DATABASE_URL=sqlite:////data/leaderboard.db
+    volumes:
+      - leaderboard-data:/data
     depends_on:
       redis:
         condition: service_healthy
@@ -72,3 +102,10 @@ services:
       - identity-service
       - tournament-service
       - leaderboard-service
+    # No volume: the gateway is a pure reverse proxy and holds no state.
+
+volumes:
+  redis-data:
+  identity-data:
+  tournament-data:
+  leaderboard-data:
