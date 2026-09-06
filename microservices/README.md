@@ -51,14 +51,38 @@ in production Postgres would be used, one instance per service).
 * **Reliability (no loss, no double-count)**: `ingestion-service`
 deduplicates every event by `event_id` using a Redis SET before it's
 ever counted, and Redis consumer groups (`XREADGROUP` / `XACK`) mean a
-crashed worker doesn't lose in-flight messages — they get redelivered.
-* **Elasticity/scalability**: `ingestion-service` and `leaderboard-service`
-are pure stream consumers with no local state that depends on which
-replica handles a message, so you can scale them horizontally:
+
+  crashed worker's un-acknowledged messages sit pending in the stream
+
+  rather than being lost outright — though we don't currently run a
+
+  reclaim loop (`XAUTOCLAIM`) to redeliver them automatically, so a
+
+  crashed consumer's in-flight messages stay stuck until that's added.
+
+* **Elasticity/scalability**: `ingestion-service` is a pure stream consumer
+
+&#x20;  with no local state, so it scales horizontally without issue:
+
+
 
 ```bash
   docker compose up --build --scale ingestion-service=3
-  ```
+
+```
+
+
+
+`leaderboard-service`, however, currently does **not** scale correctly
+
+beyond 1 replica — each replica keeps its own local SQLite file, so
+
+scaling it splits the leaderboard data across replicas instead of
+
+sharing it. See "Known limitation" in `docs/ARCHITECTURE.md` for the
+
+full explanation and how we'd fix it.
+
 
 See `k8s/leaderboard-service.yaml` for the equivalent on Kubernetes,
 including a HorizontalPodAutoscaler.
