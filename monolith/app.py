@@ -198,8 +198,8 @@ def register():
         return jsonify({"error": "username and password are required"}), 400
     if len(password) < 6:
         return jsonify({"error": "password must be at least 6 characters"}), 400
-    if role not in VALID_ROLES:
-        return jsonify({"error": "role must be one of %s" % sorted(VALID_ROLES)}), 400
+    if role not in (VALID_ROLES - {"admin"}):
+        return jsonify({"error": "role must be one of %s" % sorted(VALID_ROLES - {"admin"})}), 400
     if User.query.filter_by(username=username).first():
         return jsonify({"error": "username already taken"}), 409
 
