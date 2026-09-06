@@ -1,0 +1,88 @@
+# Redis: the event backbone of the result-ingestion pipeline.
+#
+# Two streams (`raw-results`, `validated-results`) and the `seen-event-ids`
+# set live here, so this is the one component in the distributed system that
+# is genuinely stateful and genuinely shared. It is deliberately NOT scaled:
+# a single instance is what makes consumer groups and the de-duplication set
+# coherent. Scaling reads is the job of leaderboard-service, not of Redis.
+#
+# Apply with the rest:
+#   kubectl apply -f k8s/
+#   kubectl get pods -w
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  # Exactly one. The dedupe set must be a single source of truth - two
+  # independent Redis instances would each accept the same event_id once,
+  # and the "no double-count" guarantee would quietly disappear.
+  replicas: 1
+  strategy:
+    # Never run two Redis pods against one RWO volume, not even briefly
+    # during a rollout.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          imagePullPolicy: IfNotPresent
+          # appendonly: persist every write, so a pod restart does not empty
+          # the dedupe set and re-open the double-count window.
+          args: ["redis-server", "--appendonly", "yes"]
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379
