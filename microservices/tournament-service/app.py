@@ -214,7 +214,7 @@ def report_result(mid):
 
     # --- PRODUCER step of the result-ingestion pipeline ---
     event = {
-        "event_id": str(uuid.uuid4()),   # used downstream to de-duplicate
+        "event_id": f"match-{match.id}-result",   # deterministic: same match -> same id, so a genuine replay is caught by ingestion-service's de-dup, not just this endpoint's own status check
         "match_id": match.id,
         "tournament_id": match.tournament_id,
         "player1_id": match.player1_id,
