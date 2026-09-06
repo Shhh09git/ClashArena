@@ -86,15 +86,32 @@ def worker_loop():
                 raw = json.loads(fields["payload"])
                 event_id = raw["event_id"]
 
-                # TESTER: de-duplicate (exactly-once guarantee)
-                if not r.sadd(DEDUPE_SET, event_id):
-                    _stats["duplicates"] += 1
+                # TESTER (1/2): validate FIRST.
+                #
+                # This used to run after the de-duplication step below, which
+                # was wrong: r.sadd() marks an event_id as permanently seen,
+                # so a malformed event burned its own id on the way to being
+                # rejected. If a corrected event ever arrived carrying that
+                # same id, the dedupe check would classify it as a duplicate
+                # and silently drop it - a valid result lost, with nothing in
+                # the stats to show it (it would count as a "duplicate", not
+                # a "rejected").
+                #
+                # Validating first means only events that are actually going
+                # to be counted consume an id, and a rejected event leaves no
+                # trace that could suppress a later retry.
+                if not test_valid(raw):
+                    _stats["rejected"] += 1
                     r.xack(STREAM_IN, GROUP, msg_id)
                     continue
 
-                # TESTER: validate
-                if not test_valid(raw):
-                    _stats["rejected"] += 1
+                # TESTER (2/2): de-duplicate (exactly-once guarantee).
+                # sadd returns 0 if the member was already present, so this is
+                # an atomic check-and-set: only the first arrival of an
+                # event_id gets past this line, even with several ingestion
+                # replicas competing for messages.
+                if not r.sadd(DEDUPE_SET, event_id):
+                    _stats["duplicates"] += 1
                     r.xack(STREAM_IN, GROUP, msg_id)
                     continue
 

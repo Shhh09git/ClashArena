@@ -193,6 +193,36 @@ This is what allows it to be scaled, deployed and to fail independently.
 
 ## 8. Testing and verification
 
+<<<<<<< HEAD
+Verification splits into one automated suite and three manual procedures.
+The split is deliberate rather than aspirational: the security and
+integrity rules are properties of a single process and can be asserted
+cheaply in CI, whereas the distributed characteristics need a running
+multi-container stack and are exercised by hand.
+
+### 8.1 Automated tests
+
+`monolith/tests/test_auth.py` — 17 tests over the identity and integrity
+module, run with `python -m pytest tests/ -v` from `monolith/`. They use an
+in-memory SQLite database and need neither Docker nor a running server, so
+they are the part of this project that could drop into CI unchanged.
+
+| Group | What is asserted |
+|---|---|
+| Password storage | The plaintext never appears in the stored hash; two users with the same password get different hashes (proving the per-user salt); a weak password and an unknown role are refused |
+| Credential handling | An unknown username and a wrong password return byte-identical responses, so the login endpoint cannot be used to enumerate accounts |
+| Token integrity | A token whose `role` claim has been edited and re-signed with another key is refused; an `alg: "none"` token is refused; an expired token is refused |
+| Claim contract | `sub` is an integer and `role` is present — the two claims `tournament-service` reads. This test is what stops a change here from silently breaking the distributed version |
+| RBAC | A player creating a tournament gets 403, an organizer gets 201, and a missing token gets 401 — the 401/403 distinction is asserted, not just the failure |
+| Result integrity | Reporting the same match twice returns 409 and leaves the leaderboard byte-identical to reporting it once; the winner must be one of the two players; `reported_by` and `reported_at` are recorded for the audit trail (R9) |
+
+The replayed-result test is the automated form of the kata's central
+integrity requirement (C3, R5), which was previously only checked by hand.
+
+### 8.2 Manual verification
+
+These need `docker compose up --build` in the relevant folder.
+=======
 The monolith has an automated suite of 17 `pytest` tests in
 `monolith/tests/test_auth.py`, covering password hashing, JWT forgery
 (`alg: none`, tampered role claim, expired token), RBAC on write
@@ -207,21 +237,41 @@ python -m pytest tests/ -v
 The distributed version has no automated suite yet; it is verified
 manually with the checks below (automating these in CI is future work,
 see §9).
+>>>>>>> origin/main
 
 - **Functional smoke test**: the `curl` walkthrough in each README
   exercises the full flow (register → login → create tournament →
   register players → start → report result → leaderboard) end to end.
-- **Reliability test (distributed)**: POST the same match result twice
-  (replay) and confirm the leaderboard only reflects it once — this
-  directly tests the "no loss, no double-count" target from the kata.
-- **Fault tolerance test (distributed)**: `docker compose stop
-  tournament-service` and confirm `GET /api/leaderboard` still responds
-  from `leaderboard-service` — demonstrating that a failure in the write
-  path doesn't take down the read surface.
-- **Scalability test (distributed)**: `docker compose up --scale
+  Both architectures serve the same paths on port 8000, so the same
+  walkthrough validates either one.
+- **Reliability (distributed)**: replay an identical `event_id` onto the
+  `raw-results` stream and confirm `ingestion-service` reports it under
+  `duplicates` while the leaderboard is unchanged — the "no loss, no
+  double-count" target. Note that this guarantee depends on the
+  `seen-event-ids` set surviving a restart, which is why Redis runs with
+  `appendonly` and a persistent volume.
+- **Fault tolerance (distributed)**: `docker compose stop
+  tournament-service`, then confirm `GET /api/leaderboard` still returns
+  200 from `leaderboard-service` and `POST /api/tournaments` returns a
+  clean 503 from the gateway rather than a hang or a crash. The gateway's
+  own `/healthz` stays 200 and reports the dead backend in its body — an
+  orchestrator should not restart the gateway because something behind it
+  is down.
+- **Scalability (distributed)**: `docker compose up --scale
   ingestion-service=3` and confirm results are still processed exactly
-  once (Redis consumer group guarantees this even with multiple workers
-  competing for messages).
+  once, which the Redis consumer group guarantees even with multiple
+  workers competing for the same messages.
+
+### 8.3 Known gaps
+
+No load testing was performed, so the responsiveness targets (p95 read
+latency) and the elasticity target (2→10 replicas under a spectator burst)
+are designed-for rather than measured — stated plainly here and in the
+architecture-characteristics document rather than presented as verified.
+`tournament-service` and the monolith also currently run Flask's
+development server; a production deployment would need a WSGI server such
+as gunicorn, and `tournament-service` additionally runs with `debug=True`,
+which exposes the Werkzeug debugger and should be disabled.
 
 ## 9. Conclusion and future work
 

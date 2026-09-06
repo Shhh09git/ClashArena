@@ -1,0 +1,118 @@
+# identity-service on Kubernetes.
+#
+# Same Deployment + Service pattern as leaderboard-service.yaml, with two
+# differences that follow from what this service actually is:
+#
+#   1. NO HorizontalPodAutoscaler. leaderboard-service is the read path that
+#      absorbs the kata's spectator burst (U10), so it autoscales. Login
+#      traffic scales with COMPETITORS (U9: a few thousand), not spectators,
+#      and every other service verifies JWTs locally without calling here -
+#      so this service is not on the hot path and a fixed 2 replicas is the
+#      honest configuration. Claiming otherwise would be autoscaling theatre.
+#
+#   2. The signing key is a Secret, not a plain env value. It is the one
+#      credential in the system that lets a holder MINT tokens rather than
+#      just verify them.
+#
+# Apply with the rest:
+#   kubectl apply -f k8s/
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: clasharena-jwt
+type: Opaque
+stringData:
+  # Demo value, matching docker-compose.yml so both environments behave the
+  # same. In anything real this is created out-of-band and never committed:
+  #   kubectl create secret generic clasharena-jwt \
+  #     --from-literal=secret-key="$(openssl rand -hex 32)"
+  # Every service that verifies a token needs this same value, which is the
+  # known weakness of symmetric HS256 documented in ARCHITECTURE.md section 6.
+  secret-key: "change-me-in-production"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: identity-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: identity-service
+spec:
+  replicas: 2
+  strategy:
+    # SQLite on a ReadWriteOnce volume: never two pods writing the same file.
+    # This is the honest limitation of using SQLite here - with Postgres this
+    # would be a RollingUpdate and replicas could go well beyond 2.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: identity-service
+  template:
+    metadata:
+      labels:
+        app: identity-service
+    spec:
+      containers:
+        - name: identity-service
+          image: clasharena/identity-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8001
+          env:
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: clasharena-jwt
+                  key: secret-key
+            - name: DATABASE_URL
+              value: sqlite:////data/identity.db
+            - name: TOKEN_TTL_HOURS
+              value: "12"
+          volumeMounts:
+            - name: identity-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "100m"
+              # 256Mi rather than leaderboard's 128Mi: password hashing is
+              # deliberately expensive, and pbkdf2 at 600k iterations is the
+              # heaviest thing this service does.
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8001
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8001
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: identity-data
+          persistentVolumeClaim:
+            claimName: identity-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: identity-service
+spec:
+  selector:
+    app: identity-service
+  ports:
+    - port: 8001
+      targetPort: 8001
