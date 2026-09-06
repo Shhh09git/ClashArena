@@ -14,7 +14,7 @@ gateway (8000)
   ├── tournament-service (8002)   — owns tournaments/matches, PRODUCES raw
   │                                 result events onto Redis stream
   │                                 `raw-results`
-  ├── ingestion-service (8003)    — TRANSFORMS + TESTS (validates \&
+  ├── ingestion-service (8003)    — TRANSFORMS + TESTS (validates &
   │                                 de-duplicates) events, republishes to
   │                                 `validated-results`
   └── leaderboard-service (8004)  — CONSUMES validated events, owns its
@@ -49,7 +49,7 @@ touching `tournament-service`.
 `leaderboard.db` are separate SQLite files (separate containers/volumes
 in production Postgres would be used, one instance per service).
 * **Reliability (no loss, no double-count)**: `ingestion-service`
-deduplicates every event by `event\_id` using a Redis SET before it's
+deduplicates every event by `event_id` using a Redis SET before it's
 ever counted, and Redis consumer groups (`XREADGROUP` / `XACK`) mean a
 crashed worker doesn't lose in-flight messages — they get redelivered.
 * **Elasticity/scalability**: `ingestion-service` and `leaderboard-service`
@@ -60,7 +60,7 @@ replica handles a message, so you can scale them horizontally:
   docker compose up --build --scale ingestion-service=3
   ```
 
-  See `k8s/leaderboard-service.yaml` for the equivalent on Kubernetes,
+See `k8s/leaderboard-service.yaml` for the equivalent on Kubernetes,
 including a HorizontalPodAutoscaler.
 
 ## Run on Kubernetes (minikube) instead of Compose
@@ -77,7 +77,7 @@ kubectl apply -f k8s/
 kubectl get pods -w
 ```
 
-\*\*Known limitation:\*\* `k8s/` currently only contains
+**Known limitation:** `k8s/` currently only contains
 
 `leaderboard-service.yaml` as a scaling example. Running
 
