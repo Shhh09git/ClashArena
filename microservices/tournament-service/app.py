@@ -16,7 +16,6 @@ import os
 import math
 import json
 import time
-import uuid
 import functools
 import datetime
 
@@ -157,6 +156,11 @@ def register_for_tournament(tid):
     t = Tournament.query.get_or_404(tid)
     if t.status != "registration":
         return jsonify({"error": "registration closed"}), 400
+    existing = Registration.query.filter_by(
+        tournament_id=tid, user_id=request.user["sub"]
+    ).first()
+    if existing:
+        return jsonify({"error": "already registered"}), 409
     db.session.add(Registration(tournament_id=tid, user_id=request.user["sub"]))
     db.session.commit()
     return jsonify({"status": "registered"}), 201
@@ -209,7 +213,7 @@ def report_result(mid):
 
     # --- PRODUCER step of the result-ingestion pipeline ---
     event = {
-        "event_id": str(uuid.uuid4()),   # used downstream to de-duplicate
+        "event_id": f"match-{match.id}-result",   # deterministic: same match -> same id, so a genuine replay is caught by ingestion-service's de-dup, not just this endpoint's own status check
         "match_id": match.id,
         "tournament_id": match.tournament_id,
         "player1_id": match.player1_id,
@@ -231,4 +235,4 @@ with app.app_context():
     db.create_all()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8002, debug=True)
+    app.run(host="0.0.0.0", port=8002, debug=False)

@@ -1,3 +1,7 @@
+
+GitHub usernames: `Shhh09git` is Shattyk Kuziyeva, `AceMageddon` is
+Daniil Glazunov.
+
 # ClashArena — Software Architecture Final Documentation
 
 Course: Software Architectures
@@ -65,23 +69,29 @@ distributed version are in `microservices/README.md` and
 
 ## 4. Architecture characteristics driving the design
 
-Derived from the kata (see the kata PDF §3 for the full derivation):
+Derived from the kata (see docs/ClashArena-Architecture-Characteristics.pdf for the full derivation and kata references). These use the same ten characteristic names as that document, so the two deliverables agree:
 
 | Characteristic | Target | How each architecture addresses it |
 |---|---|---|
-| Elasticity | absorb a spectator/read burst without manual intervention | Monolith: none — the whole app scales as one unit, so a read spike forces scaling everything, including the write path. Distributed: `leaderboard-service` (pure read + stream consumer) scales independently via `--scale` / HPA. |
-| Scalability | sustain steady growth in accounts/events | Monolith: vertical scaling / running multiple identical replicas behind a load balancer, but the DB remains a single bottleneck. Distributed: each service scales to its own load profile; each owns its own DB. |
-| Reliability (result ingestion) | no loss, no double-count | Monolith: guaranteed trivially — result + rating update happen in one DB transaction. Distributed: guaranteed explicitly — `ingestion-service` de-duplicates by `event_id`, Redis consumer groups (XACK) prevent loss on worker crash. |
-| Fault tolerance | a failing component shouldn't take down read surfaces | Monolith: a bug or overload anywhere (e.g. rating logic) can take down bracket/leaderboard reads too, since it's one process. Distributed: `leaderboard-service` keeps serving its last known state even if `tournament-service` is down. |
-| Security / integrity | authenticated, authorised, auditable results | Both: JWT auth + role checks (RBAC) on every write endpoint; only the reporting organizer's identity is trusted, and each match can only be reported once. |
-| Deployability / modularity | independent evolution of domains | Monolith: one deployable unit — any change redeploys everything. Distributed: five independently buildable/deployable images. |
+| Partitioning type | domain-driven boundaries, not technical layers | Monolith: one codebase, but internally organised by domain (auth/tournaments/matches/leaderboard modules). Distributed: literally separate services, one per domain, each owning its own database. |
 | Simplicity | ease of understanding | Monolith clearly wins here — one codebase, one database, no network calls to reason about. This is the explicit trade-off we highlight in the conclusion. |
+| Modularity | discrete, independently buildable components | Monolith: modules share one process and one database, so nothing is truly independent. Distributed: 5 independently buildable Docker images, zero shared schema. |
+| Testability | results and dispute logic must be verifiable | Monolith: covered by 17 automated pytest tests (password hashing, JWT/RBAC, replay protection). Distributed: replay protection is enforced in two places — `tournament-service` refuses a second report of the same match with a 409, and `ingestion-service` de-duplicates on a deterministic `event_id` (`match-<id>-result`) so a redelivered stream message is also caught. The distributed path is verified manually via the curl walkthrough; not yet automated (future work). |
+| Deployability | ease, frequency and risk of deployment | Monolith: one command, one container, healthy in under a minute. Distributed: one command, six containers, healthy in under two minutes; any single service can also be rebuilt and redeployed on its own. |
+| Evolvability | ease of evolving the software | Monolith: any change means rebuilding and redeploying the whole app. Distributed: one service (e.g. `leaderboard-service`) can be changed, rebuilt and redeployed alone — demonstrated for real when we fixed a rating bug there without touching any other service. |
+| Responsiveness | how quickly the software replies | Monolith: synchronous, in-process — a reported result and its rating update happen in the same request. Distributed: asynchronous — a result flows through Redis before the leaderboard sees it, adding latency (sub-second in our own manual testing; not formally load tested). |
+| Scalability | sustain steady growth in accounts/events | Monolith: vertical scaling / running identical replicas behind a load balancer, but the database remains a single bottleneck. Distributed: each service scales to its own load profile; each owns its own database. |
+| Elasticity | absorb a spectator/read burst without manual intervention | Monolith: none — the whole app scales as one unit, so a read spike forces scaling everything, including the write path. Distributed: `leaderboard-service` (pure read + stream consumer) is designed to scale independently via `--scale` / a Kubernetes HPA — see the known limitation below regarding correctness at more than 1 replica. |
+| Fault tolerance | a failing component shouldn't take down read surfaces; results shouldn't be lost or double-counted | Monolith: one process — if it fails, everything fails, but within a single request a result and its rating update are atomic (trivially consistent). Distributed: `ingestion-service` de-duplicates by `event_id`, and Redis consumer groups mean an unacknowledged message stays in the pending list rather than being silently dropped. Note that we do not yet reclaim those pending entries (`XAUTOCLAIM`), so a worker that dies mid-message leaves that result stuck — recovering it is listed as future work in §9. `leaderboard-service` keeps answering reads even if `tournament-service` is down (verified directly). |
+
+Security (JWT authentication, RBAC on every write endpoint) is not one of the course's twelve characteristics, so it isn't a row above — it's covered as a cross-cutting concern in §6 instead.
 
 This table is the core deliverable of comparing the two styles: the
-monolith is simpler and trivially consistent; the microservices version
-buys elasticity, fault isolation and independent deployability at the
-cost of operational complexity (a message broker, eventual consistency
-between services, more moving parts to run locally).
+monolith is simpler and trivially consistent; the distributed version
+buys elasticity, fault isolation and independent deployability, at the
+cost of operational complexity — a message broker to run, eventual
+consistency between the write path and the leaderboard, and more moving
+parts to keep healthy.
 
 ## 5. Architectures
 
@@ -153,8 +163,9 @@ This is what allows it to be scaled, deployed and to fail independently.
   `require_auth(roles=[...])` decorator, checked on every write endpoint.
 - Result integrity: a match can only be reported once
   (`status == "reported"` short-circuits further writes), and in the
-  distributed version each event additionally carries a unique `event_id`
-  that `ingestion-service` de-duplicates against before it is ever counted
+  distributed version each event carries a deterministic `event_id`
+  (`match-<id>-result`) that `ingestion-service` de-duplicates against
+  before it is ever counted
   — satisfying the kata's "tamper-resistant, auditable results" requirement
   at the pipeline level.
 - Not yet implemented (documented as future work, see §9): encryption at
@@ -182,6 +193,7 @@ This is what allows it to be scaled, deployed and to fail independently.
 
 ## 8. Testing and verification
 
+<<<<<<< HEAD
 Verification splits into one automated suite and three manual procedures.
 The split is deliberate rather than aspirational: the security and
 integrity rules are properties of a single process and can be asserted
@@ -210,6 +222,22 @@ integrity requirement (C3, R5), which was previously only checked by hand.
 ### 8.2 Manual verification
 
 These need `docker compose up --build` in the relevant folder.
+=======
+The monolith has an automated suite of 17 `pytest` tests in
+`monolith/tests/test_auth.py`, covering password hashing, JWT forgery
+(`alg: none`, tampered role claim, expired token), RBAC on write
+endpoints, and replay refusal. Run them with:
+
+```bash
+cd monolith
+pip install -r requirements.txt pytest
+python -m pytest tests/ -v
+```
+
+The distributed version has no automated suite yet; it is verified
+manually with the checks below (automating these in CI is future work,
+see §9).
+>>>>>>> origin/main
 
 - **Functional smoke test**: the `curl` walkthrough in each README
   exercises the full flow (register → login → create tournament →
@@ -256,7 +284,9 @@ at the cost of needing a message broker, accepting eventual consistency
 between the write path and the leaderboard, and more infrastructure to
 operate.
 
-Future work: Postgres instead of SQLite for real concurrent load,
+Future work: an `XAUTOCLAIM` reclaim loop so a crashed stream worker's
+pending message is picked up by another replica, Postgres instead of
+SQLite for real concurrent load,
 HTTPS/TLS termination at the gateway, a proper audit trail for
 moderator actions (ban, result reversal), and CI (GitHub Actions) running
 the smoke tests above against both `docker compose up` stacks on every
@@ -299,3 +329,63 @@ clasharena/
     ├── docker-compose.yml
     └── README.md
 ```
+
+## AI usage transparency
+
+Per the course policy on generative AI, here's how we used it: Claude
+(Anthropic) scaffolded the first version of both architectures from
+our kata (monolith and the microservices split with the Redis
+result-ingestion pipeline) and drafted the initial documentation, and
+helped us debug issues as we hit them (Docker/VPN cert errors, port
+conflicts, a real application bug).
+
+What we did ourselves: ran the full system end to end multiple times,
+found and fixed a real bug in `leaderboard-service` (a crash on new
+players' rating entries — see `microservices/evidence-bugfix.txt`),
+tested fault tolerance and reliability manually, split and reviewed
+the code by domain (Daniil: identity/security; Shattyk:
+tournament/scalability) on our own branches with real pull requests,
+and made the actual architecture-characteristic decisions ourselves.
+
+## Known limitation: leaderboard-service does not scale correctly yet
+
+`leaderboard-service` is the characteristic's headline example (its
+Kubernetes manifest scales it 2→10 replicas via an HPA), but scaling
+it beyond 1 replica is currently **broken**, for two reasons:
+
+1. Each replica has its own local SQLite file (`sqlite:///leaderboard.db`),
+   not a shared database. Replica A's writes are invisible to replica B.
+2. All replicas share one Redis consumer group (`leaderboard-group`).
+   A consumer group *distributes* messages — each event goes to exactly
+   one replica, not all of them. So with 10 replicas, the 10 databases
+   each hold a different, incomplete slice of the results, and
+   `GET /api/leaderboard` returns whichever slice the replica that
+   handled your request happens to know about.
+
+In short: the exact scenario the elasticity target describes (scale to
+10 replicas during a spectator burst) is where this breaks worst. At
+`minReplicas: 2` it is already inconsistent.
+
+**How we would fix it**, in increasing order of effort:
+
+1. Split read and write roles: one `leaderboard-writer` (1 replica)
+   consumes the stream and owns the database; a separate
+   `leaderboard-reader` Deployment only serves `GET /api/leaderboard`
+   against that same shared database, and is what the HPA actually
+   scales. This matches the read/write split we already describe
+   elsewhere in this document.
+2. Give each replica its own consumer group name (e.g.
+   `leaderboard-group-{HOSTNAME}`) so every replica sees every event
+   and builds a complete local copy — cheaper to implement, but
+   replicas can drift out of sync with each other over time.
+3. Move rating state into Redis itself (e.g. a sorted set) so every
+   replica reads from the same store instead of a local file.
+
+We are documenting this rather than shipping a fix we haven't tested,
+since we would rather be explicit about a limitation we understand
+than claim a scaling story that doesn't hold up under inspection.
+Related: no service currently mounts a volume for its database (the
+monolith does this correctly via `monolith-data:/data`), so every
+microservice's data is lost on `docker compose down` — worth fixing
+alongside the above.
+

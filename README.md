@@ -5,12 +5,12 @@ styles: as a **monolith** and as **microservices**. Same domain, same public
 API shape, two different ways of building it — see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full comparison.
 
-**Status:** Both architectures working end to end · **Course:** Software
+**Status:** ✅ Both architectures working end to end · **Course:** Software
 Architectures (CM90) · **Team:** Daniil Glazunov, Shattyk Kuziyeva
 
 ---
 
-## Quick start
+## 🚀 Quick start
 
 ```bash
 # Monolith — one Flask app, one database
@@ -34,17 +34,25 @@ leaderboard) are in each folder's own README.
 | [`docs/Kata-updated.pdf`](docs/Kata-updated.pdf) | The original kata, with every requirement/user/context item numbered for reference |
 | [`Kata-Esports-Tournament-Platform.pdf`](Kata-Esports-Tournament-Platform.pdf) | The original kata as first submitted |
 
-## Architecture overview
+## 🏗️ Architecture overview
 
 **Monolith** — one process, one database:
 
+```
 Client → Flask app (auth, tournaments, matches, leaderboard) → SQLite
-
+```
 
 **Microservices** — five services behind a gateway, wired with Redis
 Streams implementing the kata's own producer → transformer → tester →
 consumer result pipeline:
 
+```
+Client → Gateway (8000)
+           ├── identity-service (8001)     — accounts, JWT
+           ├── tournament-service (8002)   — tournaments, brackets, PRODUCES results
+           ├── ingestion-service (8003)    — TRANSFORMS + TESTS (validate, de-dupe)
+           └── leaderboard-service (8004)  — CONSUMES validated results, ratings
+```
 
 Each service owns its own database. See `docs/ARCHITECTURE.md` §5 for the
 full diagrams.
@@ -60,32 +68,33 @@ full diagrams.
 | Containerisation | Docker, Docker Compose |
 | Orchestration | Kubernetes manifests (`microservices/k8s/`), runnable on minikube |
 
-## Project structure
+## 📁 Project structure
 
+```
 clasharena/
-├── README.md # this file
+├── README.md                     # this file
 ├── Kata-Esports-Tournament-Platform.pdf
 ├── docs/
-│ ├── ARCHITECTURE.md
-│ ├── ClashArena-Architecture-Characteristics.pdf
-│ └── Kata-updated.pdf
+│   ├── ARCHITECTURE.md
+│   ├── ClashArena-Architecture-Characteristics.pdf
+│   └── Kata-updated.pdf
 ├── monolith/
-│ ├── app.py
-│ ├── Dockerfile
-│ ├── docker-compose.yml
-│ └── README.md
+│   ├── app.py
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   └── README.md
 └── microservices/
-├── gateway/
-├── identity-service/
-├── tournament-service/
-├── ingestion-service/
-├── leaderboard-service/
-├── k8s/
-├── docker-compose.yml
-└── README.md
+    ├── gateway/
+    ├── identity-service/
+    ├── tournament-service/
+    ├── ingestion-service/
+    ├── leaderboard-service/
+    ├── k8s/
+    ├── docker-compose.yml
+    └── README.md
+```
 
-
-## Team & responsibilities
+## 👥 Team & responsibilities
 
 Matches the kata's stated ownership split:
 
@@ -93,3 +102,14 @@ Matches the kata's stated ownership split:
 |---|---|---|
 | Daniil Glazunov | `identity-service`, auth/RBAC in `monolith` and `tournament-service` | Identity, integrity & security |
 | Shattyk Kuziyeva | `tournament-service`, `ingestion-service`, `leaderboard-service`, `k8s/` | Tournament format & scalability/elasticity |
+
+## ✅ What's been verified
+
+- Full flow tested end to end on both architectures (register → tournament
+  → bracket → result → leaderboard).
+- A real bug found and fixed in `leaderboard-service` (`NoneType` rating on
+  new players) — see `docs/ARCHITECTURE.md` §7 and
+  `microservices/evidence-bugfix.txt`.
+- Fault tolerance: leaderboard reads keep working if `tournament-service`
+  goes down.
+- Reliability: replaying the same match result doesn't double-count it.

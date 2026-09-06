@@ -132,22 +132,23 @@ def register():
     username = (body.get("username") or "").strip()
     password = body.get("password") or ""
     role = body.get("role") or "player"
-
     if not username or not password:
         return jsonify({"error": "username and password are required"}), 400
     if len(password) < 6:
         return jsonify({"error": "password must be at least 6 characters"}), 400
-    if role not in VALID_ROLES:
-        return jsonify({"error": "role must be one of %s" % sorted(VALID_ROLES)}), 400
+    # Self-registration can only create players/organizers/referees.
+    # "admin" is deliberately excluded here to prevent privilege
+    # escalation via public registration; admins must be seeded
+    # separately (e.g. directly in the database).
+    if role not in (VALID_ROLES - {"admin"}):
+        return jsonify({"error": "role must be one of %s" % sorted(VALID_ROLES - {"admin"})}), 400
     if User.query.filter_by(username=username).first():
         return jsonify({"error": "username already taken"}), 409
-
     user = User(username=username, role=role)
     user.set_password(password)
     db.session.add(user)
     db.session.commit()
     return jsonify({"id": user.id, "username": user.username, "role": user.role}), 201
-
 
 @app.post("/api/login")
 def login():

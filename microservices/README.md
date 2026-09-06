@@ -42,26 +42,50 @@ the gateway routes every request to the right service.
 
 ## What's actually distributed here
 
-- **Independent deployability / modularity**: each folder here is its own
-  Docker image; you can rebuild and redeploy `leaderboard-service` without
-  touching `tournament-service`.
-- **Database-per-service**: `identity.db`, `tournaments.db`,
-  `leaderboard.db` are separate SQLite files (separate containers/volumes
-  in production Postgres would be used, one instance per service).
-- **Reliability (no loss, no double-count)**: `ingestion-service`
-  deduplicates every event by `event_id` using a Redis SET before it's
-  ever counted, and Redis consumer groups (`XREADGROUP` / `XACK`) mean a
-  crashed worker doesn't lose in-flight messages — they get redelivered.
-- **Elasticity/scalability**: `ingestion-service` and `leaderboard-service`
-  are pure stream consumers with no local state that depends on which
-  replica handles a message, so you can scale them horizontally:
+* **Independent deployability / modularity**: each folder here is its own
+Docker image; you can rebuild and redeploy `leaderboard-service` without
+touching `tournament-service`.
+* **Database-per-service**: `identity.db`, `tournaments.db`,
+`leaderboard.db` are separate SQLite files (separate containers/volumes
+in production Postgres would be used, one instance per service).
+* **Reliability (no loss, no double-count)**: `ingestion-service`
+deduplicates every event by `event_id` using a Redis SET before it's
+ever counted, and Redis consumer groups (`XREADGROUP` / `XACK`) mean a
 
-  ```bash
+  crashed worker's un-acknowledged messages sit pending in the stream
+
+  rather than being lost outright — though we don't currently run a
+
+  reclaim loop (`XAUTOCLAIM`) to redeliver them automatically, so a
+
+  crashed consumer's in-flight messages stay stuck until that's added.
+
+* **Elasticity/scalability**: `ingestion-service` is a pure stream consumer
+
+&#x20;  with no local state, so it scales horizontally without issue:
+
+
+
+```bash
   docker compose up --build --scale ingestion-service=3
-  ```
 
-  See `k8s/leaderboard-service.yaml` for the equivalent on Kubernetes,
-  including a HorizontalPodAutoscaler.
+```
+
+
+
+`leaderboard-service`, however, currently does **not** scale correctly
+
+beyond 1 replica — each replica keeps its own local SQLite file, so
+
+scaling it splits the leaderboard data across replicas instead of
+
+sharing it. See "Known limitation" in `docs/ARCHITECTURE.md` for the
+
+full explanation and how we'd fix it.
+
+
+See `k8s/leaderboard-service.yaml` for the equivalent on Kubernetes,
+including a HorizontalPodAutoscaler.
 
 ## Run on Kubernetes (minikube) instead of Compose
 
@@ -77,6 +101,29 @@ kubectl apply -f k8s/
 kubectl get pods -w
 ```
 
-(`k8s/` currently ships a full manifest for `leaderboard-service` as the
-scaling example required by the assignment; the same pattern — Deployment
-+ Service + HPA — applies to the other services.)
+**Known limitation:** `k8s/` currently only contains
+
+`leaderboard-service.yaml` as a scaling example. Running
+
+`kubectl apply -f k8s/` on a fresh minikube cluster will deploy a
+
+`leaderboard-service` pod that can't actually reach Redis or
+
+`identity-service`, since neither is deployed in the cluster — it'll
+
+report healthy on `/healthz` while its background worker fails in a
+
+loop. To fully run the distributed architecture on Kubernetes, you'd
+
+also need `redis.yaml` and `identity-service.yaml` (same Deployment +
+
+Service pattern as `leaderboard-service.yaml`) applied alongside it.
+
+The Horizontal Pod Autoscaler also requires
+
+`minikube addons enable metrics-server` first. Docker Compose is the
+
+fully working way to run this project end to end; the Kubernetes
+
+manifest demonstrates the scaling pattern the assignment asks for.)
+
