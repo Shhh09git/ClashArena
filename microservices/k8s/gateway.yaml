@@ -1,0 +1,111 @@
+# gateway on Kubernetes.
+#
+# The public entrypoint, and the only Service in this folder that is
+# reachable from outside the cluster. Two differences from every other
+# manifest here follow from that:
+#
+#   - type: NodePort, not ClusterIP. Every other service is internal and
+#     addressed by its DNS name (http://identity-service:8001). The gateway
+#     is what clients actually hit, so it needs to be exposed. On minikube:
+#         minikube service gateway --url
+#     In a cloud cluster this would be a LoadBalancer or sit behind an
+#     Ingress with TLS termination - the HTTPS gap noted in
+#     ARCHITECTURE.md section 6.
+#
+#   - It HAS an HPA, with the highest ceiling of any component. Every
+#     spectator read passes through here on its way to leaderboard-service,
+#     so during the kata's U10 burst (100k-500k concurrent readers) the
+#     gateway sees the full spike. Scaling leaderboard-service without
+#     scaling the gateway would just move the bottleneck one hop earlier.
+#
+# It holds no state and no volume: a pure reverse proxy, which is what makes
+# horizontal scaling trivial here. It also does not verify JWTs - each
+# service does that for itself, so replicas share nothing at all.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      containers:
+        - name: gateway
+          image: clasharena/gateway:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            - name: IDENTITY_URL
+              value: http://identity-service:8001
+            - name: TOURNAMENT_URL
+              value: http://tournament-service:8002
+            - name: LEADERBOARD_URL
+              value: http://leaderboard-service:8004
+            - name: UPSTREAM_TIMEOUT
+              value: "10"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 5
+          livenessProbe:
+            # /healthz returns 200 for the gateway itself even when a backend
+            # is unreachable, reporting the dead backend in its body instead.
+            # That is deliberate: restarting the gateway because
+            # tournament-service is down would turn one service's outage into
+            # a total one, which is the opposite of the fault-tolerance
+            # target in ARCHITECTURE.md section 4.
+            httpGet:
+              path: /healthz
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+spec:
+  type: NodePort
+  selector:
+    app: gateway
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 30080
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: gateway-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: gateway
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60

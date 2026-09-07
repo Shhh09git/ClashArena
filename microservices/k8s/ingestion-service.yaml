@@ -1,0 +1,97 @@
+# ingestion-service on Kubernetes.
+#
+# The transformer + tester stage of the result pipeline. Structurally the
+# most scalable component in the system, and the manifest reflects that
+# rather than copying the write-path pattern:
+#
+#   - NO PersistentVolumeClaim. This service owns no database. All of its
+#     state - the streams and the `seen-event-ids` set - lives in Redis.
+#     That is precisely what makes it safe to run many replicas.
+#   - RollingUpdate, not Recreate. With no exclusive volume to hold, there
+#     is nothing to serialise, so updates can be zero-downtime.
+#   - It HAS an HPA. Redis consumer groups (XREADGROUP/XACK) hand each
+#     message to exactly one consumer in the group, so N replicas divide
+#     the work instead of duplicating it. This is the Kubernetes equivalent
+#     of `docker compose up --scale ingestion-service=3` in the README.
+#
+# The HPA scales on CPU, which is a proxy for stream throughput rather than
+# a direct measure of it. Scaling on Redis stream lag (via KEDA or a custom
+# metric) would be the correct signal and is worth naming as future work -
+# CPU is what a stock cluster can do without extra components.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion-service
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app: ingestion-service
+  template:
+    metadata:
+      labels:
+        app: ingestion-service
+    spec:
+      containers:
+        - name: ingestion-service
+          image: clasharena/ingestion-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8003
+          env:
+            - name: REDIS_URL
+              value: redis://redis:6379/0
+            # The app reads HOSTNAME as its consumer name within the group.
+            # Kubernetes sets HOSTNAME to the pod name automatically, so each
+            # replica registers as a distinct consumer without extra config.
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8003
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8003
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingestion-service
+spec:
+  selector:
+    app: ingestion-service
+  ports:
+    - port: 8003
+      targetPort: 8003
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ingestion-service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ingestion-service
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70

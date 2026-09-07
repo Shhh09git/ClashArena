@@ -1,0 +1,104 @@
+# tournament-service on Kubernetes.
+#
+# The WRITE path: owns tournaments, registrations and matches, and produces
+# raw result events onto the Redis stream.
+#
+# Deliberately NOT autoscaled, for two independent reasons:
+#
+#   1. Load profile. Writes scale with COMPETITORS (kata U9: a few thousand
+#      in a typical weekly cup, U11: several thousand results per hour at
+#      peak), not with spectators. The 100k-500k burst in U10 is read
+#      traffic, and it lands on gateway and leaderboard-service - which is
+#      where the HPAs are.
+#   2. Storage. SQLite on a ReadWriteOnce volume cannot be written by two
+#      pods at once, so replicas cannot exceed 1 regardless of load. This is
+#      the honest cost of the SQLite choice; with Postgres this would be a
+#      RollingUpdate with several replicas and an HPA would become sensible.
+#
+# The SECRET_KEY comes from the `clasharena-jwt` Secret defined in
+# k8s/identity-service.yaml. `kubectl apply -f k8s/` processes files
+# alphabetically, so that Secret exists before this Deployment is created.
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tournament-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tournament-service
+spec:
+  # One writer only - see the storage note above.
+  replicas: 1
+  strategy:
+    # Recreate, not RollingUpdate: a rolling update briefly runs the old and
+    # new pod together, which would mean two processes writing one SQLite
+    # file on a ReadWriteOnce volume.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: tournament-service
+  template:
+    metadata:
+      labels:
+        app: tournament-service
+    spec:
+      containers:
+        - name: tournament-service
+          image: clasharena/tournament-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8002
+          env:
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: clasharena-jwt
+                  key: secret-key
+            - name: DATABASE_URL
+              value: sqlite:////data/tournaments.db
+            - name: REDIS_URL
+              value: redis://redis:6379/0
+          volumeMounts:
+            - name: tournament-data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8002
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8002
+            initialDelaySeconds: 15
+            periodSeconds: 20
+      volumes:
+        - name: tournament-data
+          persistentVolumeClaim:
+            claimName: tournament-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tournament-service
+spec:
+  selector:
+    app: tournament-service
+  ports:
+    - port: 8002
+      targetPort: 8002
