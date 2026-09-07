@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Local databases — every service creates its own SQLite file at runtime.
+# These must never be committed: they contain password hashes, and a stale
+# committed .db would silently shadow a fresh one on another machine.
+*.db
+*.sqlite
+*.sqlite3
+
+# Local virtualenvs
+.venv/
+venv/
+env/
+
+# Secrets — SECRET_KEY and anything else injected at runtime
+.env
+*.env
+!.env.example
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
