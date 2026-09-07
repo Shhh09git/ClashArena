@@ -266,10 +266,9 @@ No load testing was performed, so the responsiveness targets (p95 read
 latency) and the elasticity target (2→10 replicas under a spectator burst)
 are designed-for rather than measured — stated plainly here and in the
 architecture-characteristics document rather than presented as verified.
-`tournament-service` and the monolith also currently run Flask's
-development server; a production deployment would need a WSGI server such
-as gunicorn, and `tournament-service` additionally runs with `debug=True`,
-which exposes the Werkzeug debugger and should be disabled.
+All services currently run Flask's development server; a production
+deployment would need a WSGI server such as gunicorn. `debug=True`
+is disabled everywhere.
 
 ## 9. Conclusion and future work
 
@@ -324,7 +323,12 @@ clasharena/
     ├── ingestion-service/
     ├── leaderboard-service/
     ├── k8s/
-    │   └── leaderboard-service.yaml
+    │   ├── redis.yaml
+    │   ├── identity-service.yaml
+    │   ├── tournament-service.yaml
+    │   ├── ingestion-service.yaml
+    │   ├── leaderboard-service.yaml
+    │   └── gateway.yaml
     ├── docker-compose.yml
     └── README.md
 ```

@@ -100,20 +100,11 @@ docker build -t clasharena/gateway:latest ./gateway
 kubectl apply -f k8s/
 kubectl get pods -w
 ```
-
-**Known limitation:** `k8s/` currently contains only
-`leaderboard-service.yaml`, as a scaling example. Running
-`kubectl apply -f k8s/` on a fresh minikube cluster deploys a
-`leaderboard-service` pod that cannot reach Redis or `identity-service`,
-since neither is deployed in the cluster — it will report healthy on
-`/healthz` while its background worker fails in a loop.
-
-To run the distributed architecture fully on Kubernetes you would also
-need `redis.yaml`, `identity-service.yaml`, `tournament-service.yaml`,
-`ingestion-service.yaml` and `gateway.yaml`, following the same
-Deployment + Service pattern as `leaderboard-service.yaml`. The
-HorizontalPodAutoscaler additionally requires
-`minikube addons enable metrics-server`.
+**Notes:** the HorizontalPodAutoscaler needs metrics data, so run
+`minikube addons enable metrics-server` before applying. The gateway
+is exposed as a NodePort — get its URL with
+`minikube service gateway --url` and use that instead of
+`localhost:8000`.
 
 Docker Compose is the fully working way to run this project end to end;
 the Kubernetes manifest demonstrates the scaling pattern the assignment
