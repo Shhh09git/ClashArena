@@ -35,6 +35,19 @@ docker compose up --build
 The public API is at `http://localhost:8000` (same paths as the monolith —
 that's intentional, so the two architectures are easy to compare).
 
+## Resetting between runs
+
+Each service now keeps its database in a named Docker volume, so data
+survives a restart:
+
+    docker compose down       # stops containers, keeps all data
+    docker compose up         # same users, tournaments and ratings
+
+To start completely fresh — which you'll want before re-running the
+curl walkthrough, since usernames are unique — remove the volumes too:
+
+    docker compose down -v
+
 ## Try it
 
 Same curl walkthrough as the monolith's README, just against port 8000 —

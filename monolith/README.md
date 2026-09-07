@@ -15,6 +15,20 @@ The API is now at `http://localhost:8000`.
 
 (Or without Docker: `pip install -r requirements.txt && python app.py`)
 
+## Resetting between runs
+
+The monolith keeps its database in a named Docker volume, so data
+survives a restart:
+
+    docker compose down       # stops the container, keeps all data
+    docker compose up         # same users, tournaments and ratings
+
+To start completely fresh — which you'll want before re-running the
+curl walkthrough below, since usernames are unique — remove the volume
+too:
+
+    docker compose down -v
+
 ## Try it (copy/paste into a terminal, one block at a time)
 
 ```bash
