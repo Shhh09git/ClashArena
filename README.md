@@ -100,8 +100,8 @@ Matches the kata's stated ownership split:
 
 | Member | Owns | Architectural focus |
 |---|---|---|
-| Daniil Glazunov | `identity-service`, auth/RBAC in `monolith` and `tournament-service` | Identity, integrity & security |
-| Shattyk Kuziyeva | `tournament-service`, `ingestion-service`, `leaderboard-service`, `k8s/` | Tournament format & scalability/elasticity |
+| Daniil Glazunov | `identity-service`, auth/RBAC in `monolith` and `tournament-service`, `microservices/k8s/` (5 of 6 manifests), `.github/workflows/`, `.gitignore`, Docker volume persistence | Identity, integrity & security |
+| Shattyk Kuziyeva | `tournament-service`, `ingestion-service`, `leaderboard-service` | Tournament format & scalability/elasticity |
 
 ## ✅ What's been verified
 
