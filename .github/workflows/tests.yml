@@ -1,0 +1,120 @@
+name: tests
+
+# Closes the "CI later" gap flagged in the architecture-characteristics
+# document (section 3.4) and listed as future work in docs/ARCHITECTURE.md
+# section 9.
+#
+# Two jobs, matching the two kinds of verification in ARCHITECTURE.md
+# section 8:
+#
+#   unit-tests  - the 17 automated tests over the identity/integrity module.
+#                 No Docker, no server, seconds to run.
+#   smoke-test  - builds the monolith image and drives the real HTTP API end
+#                 to end: the walkthrough from monolith/README.md turned into
+#                 something a machine checks on every push.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    name: monolith unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"        # same version as the Dockerfiles
+          cache: pip
+          cache-dependency-path: monolith/requirements.txt
+
+      - name: Install dependencies
+        working-directory: monolith
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Run tests
+        working-directory: monolith
+        run: python -m pytest tests/ -v
+
+  smoke-test:
+    name: monolith end-to-end smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and start the monolith
+        working-directory: monolith
+        run: docker compose up --build -d
+
+      - name: Wait for the service to become healthy
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf localhost:8000/healthz > /dev/null; then
+              echo "healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "service did not become healthy within 30s"
+          exit 1
+
+      - name: Register accounts and log in
+        run: |
+          curl -sf -X POST localhost:8000/api/register -H 'Content-Type: application/json' -d '{"username":"organizer","password":"hunter2","role":"organizer"}'
+          curl -sf -X POST localhost:8000/api/register -H 'Content-Type: application/json' -d '{"username":"alice","password":"hunter2"}'
+          curl -sf -X POST localhost:8000/api/register -H 'Content-Type: application/json' -d '{"username":"bob","password":"hunter2"}'
+          token () { curl -s -X POST localhost:8000/api/login -H 'Content-Type: application/json' -d "{\"username\":\"$1\",\"password\":\"hunter2\"}" | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])'; }
+          echo "ORG=$(token organizer)" >> "$GITHUB_ENV"
+          echo "ALICE=$(token alice)"   >> "$GITHUB_ENV"
+          echo "BOB=$(token bob)"       >> "$GITHUB_ENV"
+
+      - name: RBAC - a player must not be able to create a tournament
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/api/tournaments -H "Authorization: Bearer $ALICE" -H 'Content-Type: application/json' -d '{"name":"Should Fail","game":"1v1"}')
+          test "$code" = "403" || { echo "expected 403, got $code"; exit 1; }
+          echo "player correctly refused with 403"
+
+      - name: Run a tournament through to a result
+        run: |
+          curl -sf -X POST localhost:8000/api/tournaments -H "Authorization: Bearer $ORG" -H 'Content-Type: application/json' -d '{"name":"CI Cup","game":"1v1"}'
+          curl -sf -X POST localhost:8000/api/tournaments/1/register -H "Authorization: Bearer $ALICE"
+          curl -sf -X POST localhost:8000/api/tournaments/1/register -H "Authorization: Bearer $BOB"
+          curl -sf -X POST localhost:8000/api/tournaments/1/start -H "Authorization: Bearer $ORG"
+          curl -sf -X POST localhost:8000/api/matches/1/result -H "Authorization: Bearer $ORG" -H 'Content-Type: application/json' -d '{"winner_id":2,"score":"2-0"}'
+
+      - name: Integrity - a replayed result must be refused with 409
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8000/api/matches/1/result -H "Authorization: Bearer $ORG" -H 'Content-Type: application/json' -d '{"winner_id":2,"score":"2-0"}')
+          test "$code" = "409" || { echo "expected 409, got $code"; exit 1; }
+          echo "replay correctly refused with 409"
+
+      - name: Leaderboard reflects the result exactly once
+        run: |
+          board=$(curl -s localhost:8000/api/leaderboard)
+          echo "$board"
+          val () { echo "$board" | python3 -c "import sys,json; print(next(r['$2'] for r in json.load(sys.stdin) if r['username']=='$1'))"; }
+          alice_rating=$(val alice rating)
+          alice_wins=$(val alice wins)
+          bob_rating=$(val bob rating)
+          bob_losses=$(val bob losses)
+          test "$alice_rating" = "1020" || { echo "alice rating was $alice_rating, expected 1020"; exit 1; }
+          test "$alice_wins"   = "1"    || { echo "alice wins was $alice_wins, expected 1"; exit 1; }
+          test "$bob_rating"   = "990"  || { echo "bob rating was $bob_rating, expected 990"; exit 1; }
+          test "$bob_losses"   = "1"    || { echo "bob losses was $bob_losses, expected 1"; exit 1; }
+          echo "leaderboard correct: the win was counted exactly once"
+
+      - name: Show container logs if anything failed
+        if: failure()
+        working-directory: monolith
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        working-directory: monolith
+        run: docker compose down -v
