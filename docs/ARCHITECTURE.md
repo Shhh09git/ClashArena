@@ -1,7 +1,3 @@
-
-GitHub usernames: `Shhh09git` is Shattyk Kuziyeva, `AceMageddon` is
-Daniil Glazunov.
-
 # ClashArena — Software Architecture Final Documentation
 
 Course: Software Architectures
@@ -348,7 +344,10 @@ players' rating entries — see `microservices/evidence-bugfix.txt`),
 tested fault tolerance and reliability manually, split and reviewed
 the code by domain (Daniil: identity/security; Shattyk:
 tournament/scalability) on our own branches with real pull requests,
-and made the actual architecture-characteristic decisions ourselves.
+and made the actual architecture-characteristic decisions ourselves.\
+
+GitHub usernames: `Shhh09git` is Shattyk Kuziyeva, `AceMageddon` is
+Daniil Glazunov.
 
 ## Known limitation: leaderboard-service does not scale correctly yet
 
@@ -392,4 +391,3 @@ mounted a volume, so all data was lost on `docker compose down`. That
 is now fixed — each service has a named volume — but persistence alone
 doesn't solve the replica-drift problem above, since each replica
 still has its own file.
-
