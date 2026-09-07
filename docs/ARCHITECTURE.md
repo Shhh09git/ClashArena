@@ -344,7 +344,7 @@ players' rating entries — see `microservices/evidence-bugfix.txt`),
 tested fault tolerance and reliability manually, split and reviewed
 the code by domain (Daniil: identity/security; Shattyk:
 tournament/scalability) on our own branches with real pull requests,
-and made the actual architecture-characteristic decisions ourselves.\
+and made the actual architecture-characteristic decisions ourselves.
 
 GitHub usernames: `Shhh09git` is Shattyk Kuziyeva, `AceMageddon` is
 Daniil Glazunov.
