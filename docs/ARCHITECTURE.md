@@ -384,8 +384,9 @@ In short: the exact scenario the elasticity target describes (scale to
 We are documenting this rather than shipping a fix we haven't tested,
 since we would rather be explicit about a limitation we understand
 than claim a scaling story that doesn't hold up under inspection.
-Related: no service currently mounts a volume for its database (the
-monolith does this correctly via `monolith-data:/data`), so every
-microservice's data is lost on `docker compose down` — worth fixing
-alongside the above.
+Related: this was previously worsened by the fact that no microservice
+mounted a volume, so all data was lost on `docker compose down`. That
+is now fixed — each service has a named volume — but persistence alone
+doesn't solve the replica-drift problem above, since each replica
+still has its own file.
 
