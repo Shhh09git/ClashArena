@@ -193,7 +193,6 @@ This is what allows it to be scaled, deployed and to fail independently.
 
 ## 8. Testing and verification
 
-<<<<<<< HEAD
 Verification splits into one automated suite and three manual procedures.
 The split is deliberate rather than aspirational: the security and
 integrity rules are properties of a single process and can be asserted
@@ -203,9 +202,14 @@ multi-container stack and are exercised by hand.
 ### 8.1 Automated tests
 
 `monolith/tests/test_auth.py` — 17 tests over the identity and integrity
-module, run with `python -m pytest tests/ -v` from `monolith/`. They use an
-in-memory SQLite database and need neither Docker nor a running server, so
-they are the part of this project that could drop into CI unchanged.
+module. They use an in-memory SQLite database and need neither Docker nor
+a running server. Run them with:
+
+```bash
+cd monolith
+pip install -r requirements.txt pytest
+python -m pytest tests/ -v
+```
 
 | Group | What is asserted |
 |---|---|
@@ -219,25 +223,19 @@ they are the part of this project that could drop into CI unchanged.
 The replayed-result test is the automated form of the kata's central
 integrity requirement (C3, R5), which was previously only checked by hand.
 
+These tests run on every push via GitHub Actions
+(`.github/workflows/tests.yml`), alongside a second job that builds the
+monolith image and drives the same walkthrough over real HTTP —
+asserting the 403 on a player creating a tournament, the 409 on a
+replayed result, and the exact leaderboard values afterwards.
+
+The distributed stack has no automated suite yet; extending the same
+smoke test to `microservices/docker-compose.yml` is listed as future
+work in §9.
+
 ### 8.2 Manual verification
 
 These need `docker compose up --build` in the relevant folder.
-=======
-The monolith has an automated suite of 17 `pytest` tests in
-`monolith/tests/test_auth.py`, covering password hashing, JWT forgery
-(`alg: none`, tampered role claim, expired token), RBAC on write
-endpoints, and replay refusal. Run them with:
-
-```bash
-cd monolith
-pip install -r requirements.txt pytest
-python -m pytest tests/ -v
-```
-
-The distributed version has no automated suite yet; it is verified
-manually with the checks below (automating these in CI is future work,
-see §9).
->>>>>>> origin/main
 
 - **Functional smoke test**: the `curl` walkthrough in each README
   exercises the full flow (register → login → create tournament →
@@ -288,9 +286,10 @@ Future work: an `XAUTOCLAIM` reclaim loop so a crashed stream worker's
 pending message is picked up by another replica, Postgres instead of
 SQLite for real concurrent load,
 HTTPS/TLS termination at the gateway, a proper audit trail for
-moderator actions (ban, result reversal), and CI (GitHub Actions) running
-the smoke tests above against both `docker compose up` stacks on every
-push.
+moderator actions (ban, result reversal), and extending the existing
+GitHub Actions pipeline — which already runs the unit suite and an
+end-to-end smoke test against the monolith stack — to cover the
+distributed stack as well.
 
 ## Appendix A — API reference (identical surface on both architectures)
 
