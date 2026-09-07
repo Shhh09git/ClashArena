@@ -7,8 +7,9 @@
 #      absorbs the kata's spectator burst (U10), so it autoscales. Login
 #      traffic scales with COMPETITORS (U9: a few thousand), not spectators,
 #      and every other service verifies JWTs locally without calling here -
-#      so this service is not on the hot path and a fixed 2 replicas is the
-#      honest configuration. Claiming otherwise would be autoscaling theatre.
+#      so this service is not on the hot path and a fixed single replica is
+#      the honest configuration. Claiming otherwise would be autoscaling
+#      theatre.
 #
 #   2. The signing key is a Secret, not a plain env value. It is the one
 #      credential in the system that lets a holder MINT tokens rather than
@@ -47,11 +48,16 @@ kind: Deployment
 metadata:
   name: identity-service
 spec:
-  replicas: 2
+  # One writer only. identity.db is a SQLite file on a ReadWriteOnce volume,
+  # and two pods opening it concurrently produce "database is locked" errors
+  # under any real registration load. On a multi-node cluster the second pod
+  # would fail to mount the volume at all. This is the honest limitation of
+  # the SQLite choice - with Postgres this would be several replicas behind a
+  # RollingUpdate, and an HPA would start to make sense.
+  replicas: 1
   strategy:
-    # SQLite on a ReadWriteOnce volume: never two pods writing the same file.
-    # This is the honest limitation of using SQLite here - with Postgres this
-    # would be a RollingUpdate and replicas could go well beyond 2.
+    # No rolling update either: it would briefly run the old and new pod
+    # together against the same file.
     type: Recreate
   selector:
     matchLabels:
